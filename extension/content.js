@@ -15,41 +15,61 @@
 
   // ─── Extraction ───────────────────────────────────────────────────────────
 
-  function parseChartData(el) {
+  // Pure: parses a raw data-chart-data string into a point array, or null if
+  // it's missing/malformed. No DOM involved, so this is unit-testable as-is.
+  function parseChartDataAttr(raw) {
     try {
-      return JSON.parse(el.getAttribute('data-chart-data'));
+      var parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : null;
     } catch (e) {
-      console.warn('[Conseq Performance Chart] failed to parse data-chart-data', e);
       return null;
     }
   }
 
-  function extractSeries(wrapper) {
-    var definitions = wrapper.querySelectorAll('.chart-definitions .chart-definition');
-    var paidEl = null;
-    var currentEl = null;
+  // Impure: the only part of extraction that actually touches the DOM.
+  function readDefinitionRecords(wrapper) {
+    var records = [];
+    wrapper.querySelectorAll('.chart-definitions .chart-definition').forEach(function (el) {
+      records.push({
+        fundname: el.getAttribute('data-fundname'),
+        unit: el.getAttribute('data-unit'),
+        rawChartData: el.getAttribute('data-chart-data')
+      });
+    });
+    return records;
+  }
 
-    definitions.forEach(function (el) {
-      var name = el.getAttribute('data-fundname');
-      if (name === FUNDNAME_PAID) paidEl = el;
-      if (name === FUNDNAME_CURRENT) currentEl = el;
+  // Pure: given plain { fundname, unit, rawChartData } records (in any order,
+  // with any extras), picks out the paid-in/current-value pair by name and
+  // parses their chart data. This is where the actual matching/validation
+  // rules live, so it's the piece most worth unit testing.
+  function extractSeriesFromRecords(records) {
+    var paid = null;
+    var current = null;
+
+    records.forEach(function (record) {
+      if (record.fundname === FUNDNAME_PAID) paid = record;
+      if (record.fundname === FUNDNAME_CURRENT) current = record;
     });
 
-    if (!paidEl || !currentEl) {
-      console.warn('[Conseq Performance Chart] could not find both series in', wrapper);
-      return null;
-    }
+    if (!paid || !current) return null;
 
-    var paidPoints = parseChartData(paidEl);
-    var currentPoints = parseChartData(currentEl);
+    var paidPoints = parseChartDataAttr(paid.rawChartData);
+    var currentPoints = parseChartDataAttr(current.rawChartData);
 
-    if (!Array.isArray(paidPoints) || !Array.isArray(currentPoints)) {
-      return null;
-    }
+    if (!paidPoints || !currentPoints) return null;
 
-    var unit = paidEl.getAttribute('data-unit') || currentEl.getAttribute('data-unit') || 'PLN';
+    var unit = paid.unit || current.unit || 'PLN';
 
     return { paidPoints: paidPoints, currentPoints: currentPoints, unit: unit };
+  }
+
+  function extractSeries(wrapper) {
+    var series = extractSeriesFromRecords(readDefinitionRecords(wrapper));
+    if (!series) {
+      console.warn('[Conseq Performance Chart] could not find both series in', wrapper);
+    }
+    return series;
   }
 
   function computePerformanceSeries(paidPoints, currentPoints) {
@@ -246,15 +266,31 @@
 
   // ─── Observer + Init ──────────────────────────────────────────────────────
 
-  processAll();
+  // Guarded so this file can be require()'d under Node (see Exports below)
+  // for unit tests without needing a DOM.
+  if (typeof document !== 'undefined') {
+    processAll();
 
-  var debounceTimer = null;
-  var observer = new MutationObserver(function () {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(function () {
-      processAll();
-    }, 200);
-  });
+    var debounceTimer = null;
+    var observer = new MutationObserver(function () {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(function () {
+        processAll();
+      }, 200);
+    });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ─── Exports ──────────────────────────────────────────────────────────────
+
+  // No-op in the browser (no `module` global there). Lets tests/ require()
+  // the pure functions above directly, with no bundler and no build step.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      parseChartDataAttr: parseChartDataAttr,
+      extractSeriesFromRecords: extractSeriesFromRecords,
+      computePerformanceSeries: computePerformanceSeries
+    };
+  }
 })();
