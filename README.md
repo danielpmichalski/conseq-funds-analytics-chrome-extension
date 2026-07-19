@@ -25,6 +25,14 @@ To pick up code changes, click the refresh icon on the extension's card in `chro
 
 Zips the contents of `extension/` into `conseq-performance-chart.zip` at the repo root (e.g. for backing up a specific version, or sideloading elsewhere). This isn't required for local use — "Load unpacked" reads `extension/` directly.
 
+## Tests
+
+```sh
+npm test
+```
+
+Runs `tests/content.test.js` with Node's built-in test runner (no dependencies to install). It covers the pure logic in `content.js` — chart-data parsing, matching the paid-in/current-value series by name, and the performance diffing math — not the DOM/Highcharts rendering itself, which still needs a live page or a local fixture to check visually.
+
 ## How it works
 
 - `extension/content.js` runs on every `https://*.conseq.pl/*` page (see `extension/manifest.json`).
@@ -40,5 +48,8 @@ extension/
   manifest.json   — Manifest V3 config (host permissions, content script)
   content.js      — all extraction/rendering logic
   images/         — extension icons
+tests/
+  content.test.js — unit tests for the pure functions in content.js
 build.sh          — zips extension/ for packaging
+package.json      — `npm test` only; no dependencies, not part of the extension
 ```
