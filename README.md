@@ -16,7 +16,7 @@ It reads the chart data that's already present in the page's HTML (`data-chart-d
 
 All four are inserted directly below the portal's own chart, in this order:
 
-1. **Wynik (zysk / strata)** — the core performance chart: `current value − amount paid in`, over time. Green where you're in profit, red where you're at a loss.
+1. **Wynik (zysk / strata)** — the core performance chart: `current value − amount paid in`, over time. Green where you're in profit, red where you're at a loss. An input above the chart lets you enter what you actually transferred from your bank account (which can be higher than the portal's own paid-in figure, e.g. due to a front-load fee taken before the deposit is recorded); entering a value overlays a second "Wynik (rzeczywisty kapitał)" line, shifted by the gap between the two, so you can see performance measured against real money out the door. It's saved in your browser's local storage, and it's an approximation — it assumes that gap has been constant over time, since there's no historical ledger of your real transfers to work from.
 2. **Zysk skumulowany na tle szczytu** — the same performance line plotted against its running peak (the highest profit reached so far), making it easy to see how far the current value is below its best point.
 3. **Obsunięcie kapitału (drawdown)** — the drawdown chart: how far, as a percentage, the current profit has fallen from that running peak. Always ≤ 0%.
 4. **Zmiana wyniku okres do okresu** — a bar chart of the change in profit/loss from one period to the next, with buttons to switch the bucket size (Tydzień / Miesiąc / Kwartał / Rok — week/month/quarter/year).

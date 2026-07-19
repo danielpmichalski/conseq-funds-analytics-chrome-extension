@@ -19,6 +19,7 @@
     { key: 'year', label: 'Rok' }
   ];
   var PERIOD_CHANGE_DEFAULT = 'month';
+  var ACTUAL_CAPITAL_STORAGE_KEY = 'conseqPerfActualCapital';
 
   // ─── Extraction ───────────────────────────────────────────────────────────
 
@@ -112,6 +113,37 @@
     });
 
     return result;
+  }
+
+  // Pure: the value of whichever point has the latest timestamp. Used to
+  // anchor computeAdjustedPerformanceSeries's offset to "today", regardless
+  // of point ordering.
+  function latestPointValue(points) {
+    if (!Array.isArray(points) || points.length === 0) return null;
+    var latest = points[0];
+    points.forEach(function (point) {
+      if (point[0] > latest[0]) latest = point;
+    });
+    return latest[1];
+  }
+
+  // Pure: shifts every point of an existing performance series by a constant
+  // offset, so the most recent point lines up with a user-supplied "actually
+  // transferred" capital figure instead of the portal's own paid-in total.
+  // The portal figure nets out redemptions and management fees already, but
+  // can still diverge from real bank transfers out the door (e.g. a
+  // front-load/subscription fee taken before the deposit is even recorded).
+  // A constant offset assumes that gap has been constant over time, which is
+  // only an approximation — there's no historical ledger to do better with.
+  function computeAdjustedPerformanceSeries(performanceData, latestPaidValue, actualCapital) {
+    if (!Array.isArray(performanceData) || performanceData.length === 0) return null;
+    if (typeof latestPaidValue !== 'number' || !isFinite(latestPaidValue)) return null;
+    if (typeof actualCapital !== 'number' || !isFinite(actualCapital)) return null;
+
+    var offset = actualCapital - latestPaidValue;
+    return performanceData.map(function (point) {
+      return [point[0], point[1] - offset];
+    });
   }
 
   // Pure: for each point, how far below the running peak-so-far it is, as a
@@ -356,14 +388,91 @@
     attempt();
   }
 
-  function renderChart(container, performanceData, unit, wrapper) {
+  // localStorage is page-scoped (conseq.pl origin), so this needs no
+  // chrome.storage permission. Persistence is a nice-to-have, not required
+  // for the chart to work — failures here are swallowed, not surfaced.
+  function readStoredActualCapital() {
+    try {
+      var raw = window.localStorage.getItem(ACTUAL_CAPITAL_STORAGE_KEY);
+      if (raw === null || raw === '') return null;
+      var value = parseFloat(raw);
+      return isFinite(value) ? value : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeStoredActualCapital(value) {
+    try {
+      if (value === null) {
+        window.localStorage.removeItem(ACTUAL_CAPITAL_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(ACTUAL_CAPITAL_STORAGE_KEY, String(value));
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // Lets the user enter what they actually transferred from their bank
+  // account, since the portal's own paid-in figure can diverge from that
+  // (front-load fees taken before the deposit is recorded, mis-tagged
+  // transactions, etc). Persisted in localStorage so it survives reloads;
+  // onChange gets a Number (or null when cleared/invalid) and owns
+  // recomputing/redrawing the adjusted series. Styled to match
+  // buildPeriodButtons above it.
+  function buildActualCapitalInput(figure, chartDiv, unit, onChange) {
+    var row = document.createElement('div');
+    row.className = 'conseq-actual-capital-input';
+    row.style.marginBottom = '8px';
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.gap = '6px';
+    row.style.fontSize = '12px';
+    row.style.color = '#333333';
+
+    var label = document.createElement('label');
+    label.textContent = 'Rzeczywiście wpłacony kapitał (' + unit + '):';
+    label.style.display = 'flex';
+    label.style.alignItems = 'center';
+    label.style.gap = '6px';
+
+    var input = document.createElement('input');
+    input.type = 'number';
+    input.step = 'any';
+    input.placeholder = 'np. 18900';
+    input.style.width = '100px';
+    input.style.fontSize = '12px';
+    input.style.padding = '2px 4px';
+
+    var stored = readStoredActualCapital();
+    if (stored !== null) input.value = String(stored);
+
+    input.addEventListener('change', function () {
+      var raw = input.value.trim();
+      var value = raw === '' ? null : parseFloat(raw);
+      if (value !== null && !isFinite(value)) value = null;
+
+      writeStoredActualCapital(value);
+      onChange(value);
+    });
+
+    label.appendChild(input);
+    row.appendChild(label);
+    figure.insertBefore(row, chartDiv);
+
+    return stored;
+  }
+
+  function renderChart(container, performanceData, unit, wrapper, latestPaidValue) {
     var formatter = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: unit });
 
     withHighcharts(function (Highcharts) {
-      var chart = Highcharts.chart(container, {
+      var chart = Highcharts.chart(container.chartDiv, {
         chart: { type: 'area' },
         title: { text: null },
         credits: { enabled: false },
+        legend: { enabled: true },
         xAxis: {
           type: 'datetime',
           labels: {
@@ -386,7 +495,6 @@
             return Highcharts.dateFormat('%Y-%m-%d', this.x) + '<br/>' + formatter.format(this.y);
           }
         },
-        legend: { enabled: false },
         plotOptions: {
           area: {
             threshold: 0,
@@ -402,11 +510,39 @@
               { value: 0, color: '#d9534f' },
               { color: '#5cb85c' }
             ]
+          },
+          {
+            name: 'Wynik (rzeczywisty kapitał)',
+            type: 'line',
+            data: [],
+            visible: false,
+            dashStyle: 'ShortDash',
+            color: '#337ab7',
+            marker: { enabled: false }
           }
         ]
       });
 
       syncPeriodSelection(wrapper, chart);
+
+      function applyActualCapital(value) {
+        if (value === null || typeof latestPaidValue !== 'number') {
+          chart.series[1].setData([], false);
+          chart.series[1].setVisible(false, false);
+          chart.redraw();
+          return;
+        }
+
+        var adjusted = computeAdjustedPerformanceSeries(performanceData, latestPaidValue, value);
+        if (!adjusted) return;
+
+        chart.series[1].setData(adjusted, false);
+        chart.series[1].setVisible(true, false);
+        chart.redraw();
+      }
+
+      var storedActualCapital = buildActualCapitalInput(container.figure, container.chartDiv, unit, applyActualCapital);
+      if (storedActualCapital !== null) applyActualCapital(storedActualCapital);
     });
   }
 
@@ -667,7 +803,8 @@
       chartClass: 'conseq-performance-chart',
       title: 'Wynik (zysk / strata)'
     });
-    renderChart(performanceContainer.chartDiv, performanceData, series.unit, wrapper);
+    var latestPaidValue = latestPointValue(series.paidPoints);
+    renderChart(performanceContainer, performanceData, series.unit, wrapper, latestPaidValue);
 
     var peakData = computeRunningPeakSeries(performanceData);
     var cumulativeContainer = buildChartContainer(performanceContainer.figure, height, {
@@ -743,7 +880,9 @@
       formatPercent: formatPercent,
       computeRunningPeakSeries: computeRunningPeakSeries,
       computePeriodChangeSeries: computePeriodChangeSeries,
-      bucketPointsByPeriod: bucketPointsByPeriod
+      bucketPointsByPeriod: bucketPointsByPeriod,
+      latestPointValue: latestPointValue,
+      computeAdjustedPerformanceSeries: computeAdjustedPerformanceSeries
     };
   }
 })();

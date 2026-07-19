@@ -11,7 +11,9 @@ const {
   formatPercent,
   computeRunningPeakSeries,
   computePeriodChangeSeries,
-  bucketPointsByPeriod
+  bucketPointsByPeriod,
+  latestPointValue,
+  computeAdjustedPerformanceSeries
 } = require('../extension/content.js');
 
 test('parseChartDataAttr', async (t) => {
@@ -303,6 +305,66 @@ test('computePeriodChangeSeries', async (t) => {
   await t.test('returns null when a period has too few buckets to diff', () => {
     const points = [[Date.UTC(2024, 0, 5), 100], [Date.UTC(2024, 0, 20), 110]];
     assert.equal(computePeriodChangeSeries(points, 'month'), null);
+  });
+});
+
+test('latestPointValue', async (t) => {
+  await t.test('returns the value of the point with the highest timestamp', () => {
+    assert.equal(latestPointValue([[1, 10], [3, 30], [2, 20]]), 30);
+  });
+
+  await t.test('does not assume the input is already sorted by timestamp', () => {
+    assert.equal(latestPointValue([[3, 30], [1, 10], [2, 20]]), 30);
+  });
+
+  await t.test('a single point is its own latest', () => {
+    assert.equal(latestPointValue([[1, 10]]), 10);
+  });
+
+  await t.test('returns null for an empty array', () => {
+    assert.equal(latestPointValue([]), null);
+  });
+
+  await t.test('returns null for null input', () => {
+    assert.equal(latestPointValue(null), null);
+  });
+});
+
+test('computeAdjustedPerformanceSeries', async (t) => {
+  await t.test('shifts every point by the gap between actual capital and the latest paid value', () => {
+    const performanceData = [[1, 0], [2, 50], [3, 100]];
+    // latestPaidValue 13280, actualCapital 18900 -> offset 5620
+    const result = computeAdjustedPerformanceSeries(performanceData, 13280, 18900);
+    assert.deepEqual(result, [[1, -5620], [2, -5570], [3, -5520]]);
+  });
+
+  await t.test('offset is zero when actual capital matches the latest paid value', () => {
+    const performanceData = [[1, 10], [2, 20]];
+    assert.deepEqual(computeAdjustedPerformanceSeries(performanceData, 100, 100), [[1, 10], [2, 20]]);
+  });
+
+  await t.test('a negative offset shifts points upward', () => {
+    const performanceData = [[1, 10], [2, 20]];
+    // latestPaidValue 100, actualCapital 80 -> offset -20
+    assert.deepEqual(computeAdjustedPerformanceSeries(performanceData, 100, 80), [[1, 30], [2, 40]]);
+  });
+
+  await t.test('returns null for an empty performance series', () => {
+    assert.equal(computeAdjustedPerformanceSeries([], 100, 100), null);
+  });
+
+  await t.test('returns null for null performance data', () => {
+    assert.equal(computeAdjustedPerformanceSeries(null, 100, 100), null);
+  });
+
+  await t.test('returns null when latestPaidValue is not a finite number', () => {
+    assert.equal(computeAdjustedPerformanceSeries([[1, 10]], null, 100), null);
+    assert.equal(computeAdjustedPerformanceSeries([[1, 10]], NaN, 100), null);
+  });
+
+  await t.test('returns null when actualCapital is not a finite number', () => {
+    assert.equal(computeAdjustedPerformanceSeries([[1, 10]], 100, null), null);
+    assert.equal(computeAdjustedPerformanceSeries([[1, 10]], 100, NaN), null);
   });
 });
 
