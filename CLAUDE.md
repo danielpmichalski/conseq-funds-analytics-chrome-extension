@@ -12,17 +12,22 @@ Management fees deducted from invested amounts are **not** factored in — no fe
 
 ## Architecture
 
-No bundler, no `package.json`, no build tool — plain vanilla JS loaded directly by Chrome.
+No bundler, no build tool — the extension itself is plain vanilla JS loaded directly by Chrome. There is a root `package.json`, but it exists purely to run the Node-based unit tests below (`"scripts": { "test": ... }`, no dependencies) — it plays no part in loading or building the extension.
 
 ```
 extension/
   manifest.json   — MV3 config: host_permissions + content_scripts only (no background, no popup/action)
   content.js       — all logic: extraction, diffing, chart injection, rendering
   images/          — extension icons (flat placeholder PNGs, fine as-is for a personal tool)
+tests/
+  content.test.js  — unit tests for the pure functions exported from content.js
 build.sh           — zips extension/ into conseq-performance-chart.zip at repo root
+package.json       — `npm test` only; no dependencies, no build/bundle scripts
 ```
 
-`content.js` is a single `'use strict'` IIFE, organized into commented sections: Config / Extraction / Rendering / Injection / Observer + Init. Keep new code in the matching section rather than adding new files — this project deliberately stays single-file.
+`content.js` is a single `'use strict'` IIFE, organized into commented sections: Config / Extraction / Rendering / Injection / Observer + Init / Exports. Keep new code in the matching section rather than adding new files — this project deliberately stays single-file.
+
+The **Exports** section at the bottom guards a `module.exports` assignment behind `typeof module !== 'undefined'`, and the **Observer + Init** section guards its DOM-touching startup code behind `typeof document !== 'undefined'`. Together these let `tests/content.test.js` `require('../extension/content.js')` under Node with zero side effects (no `module` global in the browser, no `document` global in Node), while the browser still runs exactly as before. When adding a new pure function worth testing, add it to that `module.exports` object rather than creating a parallel copy for tests.
 
 ## Key page structure it depends on
 
@@ -51,11 +56,16 @@ build.sh           — zips extension/ into conseq-performance-chart.zip at repo
 - Mark processed DOM nodes (`data-conseq-perf-injected`) before doing async work (e.g. waiting for `Highcharts` to load), so the `MutationObserver` re-scan never double-injects.
 - Fail quiet but visible: on missing/malformed data, `console.warn`/`console.error` and skip that chart — never throw, since one broken chart block shouldn't break the rest of the page.
 - Keep `manifest.json` `host_permissions`/`matches` scoped to `*.conseq.pl` — don't broaden it.
+- Prefer separating pure logic (string/array/object in, value out — e.g. `parseChartDataAttr`, `extractSeriesFromRecords`, `computePerformanceSeries`) from DOM/Highcharts-touching wrappers (e.g. `readDefinitionRecords`, `extractSeries`, `renderChart`). The pure half is what's actually worth unit testing; the DOM half is thin enough to only need a fixture/manual check (see Testing below).
 - `content_scripts` must keep `"world": "MAIN"` in `manifest.json`. Content scripts default to an isolated JS world that shares the DOM with the page but *not* page-defined JS globals — `window.Highcharts` (set by the portal's own script) is invisible from the default isolated world, so `renderChart`'s poll for it silently times out (`console.error`, container stays empty) even though extraction/diffing succeed. `"world": "MAIN"` runs `content.js` in the page's own context so it can see `window.Highcharts` directly. Don't remove this to "sandbox" the script — it will break rendering silently, and the failure mode looks like a Highcharts config bug rather than a world-isolation one.
 
 ## Testing / verification
 
-The target site is private and requires login, so there's no way to test end-to-end without the user's own session. To sanity-check extraction/diffing/rendering logic without the live site:
+The target site is private and requires login, so there's no way to test end-to-end without the user's own session.
+
+**Unit tests** — `npm test` (or `node --test tests/`) runs `tests/content.test.js` against the pure functions `content.js` exports (see Architecture above): chart-data parsing, series matching/validation, and the paid-vs-current diffing math. No dependencies, no jsdom — these functions take/return plain values, not DOM nodes. When you touch any of `parseChartDataAttr`/`extractSeriesFromRecords`/`computePerformanceSeries`, or extract a new pure function, add/update cases here first. Edge cases already covered: malformed/non-array JSON, missing series, out-of-order records, non-positional timestamp alignment, no-overlap → `null`.
+
+**DOM/Highcharts logic** (extraction from real elements, chart injection, range-selector sync) isn't covered by the unit tests and still needs a fixture or the live site:
 
 1. Pull a real (or representative) `data-chart-data` pair for both series — either from the user or from a previous scratch capture.
 2. Build a minimal local fixture HTML file replicating the DOM structure above, with a `<script>` tag loading Highcharts from a CDN.
