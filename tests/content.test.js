@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const {
   parseChartDataAttr,
   extractSeriesFromRecords,
-  computePerformanceSeries
+  computePerformanceSeries,
+  formatAxisAmount
 } = require('../extension/content.js');
 
 test('parseChartDataAttr', async (t) => {
@@ -121,5 +122,31 @@ test('computePerformanceSeries', async (t) => {
 
   await t.test('returns null for two empty arrays', () => {
     assert.equal(computePerformanceSeries([], []), null);
+  });
+});
+
+test('formatAxisAmount', async (t) => {
+  await t.test('groups thousands with a plain space and appends the unit', () => {
+    assert.equal(formatAxisAmount(1000, 'PLN'), '1 000 PLN');
+  });
+
+  await t.test('groups larger numbers at every thousand', () => {
+    assert.equal(formatAxisAmount(1234567, 'PLN'), '1 234 567 PLN');
+  });
+
+  await t.test('preserves the minus sign for negative values', () => {
+    assert.equal(formatAxisAmount(-3000, 'PLN'), '-3 000 PLN');
+  });
+
+  await t.test('rounds to whole numbers (no decimals)', () => {
+    assert.equal(formatAxisAmount(1000.6, 'PLN'), '1 001 PLN');
+  });
+
+  await t.test('handles values below the grouping threshold', () => {
+    assert.equal(formatAxisAmount(500, 'PLN'), '500 PLN');
+  });
+
+  await t.test('handles zero', () => {
+    assert.equal(formatAxisAmount(0, 'PLN'), '0 PLN');
   });
 });

@@ -109,6 +109,19 @@
 
   // ─── Rendering ────────────────────────────────────────────────────────────
 
+  // Pure: formats an axis value as "1 000 PLN" — space-grouped every 3
+  // digits, no decimals, unit suffix — matching the original chart's axis
+  // label style. Not locale-based: pl-PL's Intl grouping only kicks in at
+  // 5+ digits (CLDR leaves 4-digit numbers ungrouped), which doesn't match
+  // the "1 000" style wanted here, so digits are grouped by hand instead.
+  function formatAxisAmount(value, unit) {
+    var rounded = Math.round(value);
+    var digits = Math.abs(rounded).toString();
+    var grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    var sign = rounded < 0 ? '-' : '';
+    return sign + grouped + ' ' + unit;
+  }
+
   function findOriginalChart(wrapper) {
     var target = wrapper.querySelector(ORIGINAL_CHART_SELECTOR);
     if (!target || !window.Highcharts || !Array.isArray(window.Highcharts.charts)) {
@@ -167,7 +180,12 @@
           credits: { enabled: false },
           xAxis: { type: 'datetime' },
           yAxis: {
-            title: { text: unit },
+            title: { text: null },
+            labels: {
+              formatter: function () {
+                return formatAxisAmount(this.value, unit);
+              }
+            },
             plotLines: [{ value: 0, width: 1, color: '#999' }]
           },
           tooltip: {
@@ -290,7 +308,8 @@
     module.exports = {
       parseChartDataAttr: parseChartDataAttr,
       extractSeriesFromRecords: extractSeriesFromRecords,
-      computePerformanceSeries: computePerformanceSeries
+      computePerformanceSeries: computePerformanceSeries,
+      formatAxisAmount: formatAxisAmount
     };
   }
 })();
