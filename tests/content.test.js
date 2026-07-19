@@ -6,7 +6,9 @@ const {
   parseChartDataAttr,
   extractSeriesFromRecords,
   computePerformanceSeries,
-  formatAxisAmount
+  formatAxisAmount,
+  computeDrawdownSeries,
+  formatPercent
 } = require('../extension/content.js');
 
 test('parseChartDataAttr', async (t) => {
@@ -148,5 +150,49 @@ test('formatAxisAmount', async (t) => {
 
   await t.test('handles zero', () => {
     assert.equal(formatAxisAmount(0, 'PLN'), '0 PLN');
+  });
+});
+
+test('computeDrawdownSeries', async (t) => {
+  await t.test('is zero while at or above the running peak, negative below it', () => {
+    const result = computeDrawdownSeries([[1, 100], [2, 150], [3, 120], [4, 150], [5, 90]]);
+    assert.deepEqual(result, [[1, 0], [2, 0], [3, -20], [4, 0], [5, -40]]);
+  });
+
+  await t.test('does not assume the input is already sorted by timestamp', () => {
+    const result = computeDrawdownSeries([[3, 90], [1, 100], [2, 150]]);
+    assert.deepEqual(result, [[1, 0], [2, 0], [3, -40]]);
+  });
+
+  await t.test('a single point has zero drawdown', () => {
+    assert.deepEqual(computeDrawdownSeries([[1, 100]]), [[1, 0]]);
+  });
+
+  await t.test('returns null for an empty array', () => {
+    assert.equal(computeDrawdownSeries([]), null);
+  });
+
+  await t.test('returns null for null input', () => {
+    assert.equal(computeDrawdownSeries(null), null);
+  });
+
+  await t.test('guards against a non-positive peak instead of dividing by it', () => {
+    const result = computeDrawdownSeries([[1, -50], [2, -100]]);
+    assert.deepEqual(result, [[1, 0], [2, 0]]);
+  });
+});
+
+test('formatPercent', async (t) => {
+  await t.test('formats a negative drawdown', () => {
+    assert.equal(formatPercent(-12), '-12%');
+  });
+
+  await t.test('rounds to whole numbers', () => {
+    assert.equal(formatPercent(-12.6), '-13%');
+  });
+
+  await t.test('handles zero without a stray minus sign', () => {
+    assert.equal(formatPercent(-0.4), '0%');
+    assert.equal(formatPercent(0), '0%');
   });
 });

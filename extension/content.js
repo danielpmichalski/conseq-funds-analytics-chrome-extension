@@ -107,6 +107,35 @@
     return result;
   }
 
+  // Pure: for each point, how far below the running peak-so-far it is, as a
+  // percentage (always <= 0). Divides by the peak itself (which only ever
+  // rises) rather than by the current value, so unlike a raw profit-percent
+  // series this never blows up near a zero crossing. Guards peak <= 0 (only
+  // possible before the very first positive point) to avoid a division that
+  // would flip the sign the wrong way.
+  function computeDrawdownSeries(points) {
+    if (!points || points.length === 0) return null;
+
+    var sorted = points.slice().sort(function (a, b) {
+      return a[0] - b[0];
+    });
+
+    var peak = null;
+    var result = [];
+
+    sorted.forEach(function (point) {
+      var timestamp = point[0];
+      var value = point[1];
+      if (peak === null || value > peak) {
+        peak = value;
+      }
+      var drawdown = peak > 0 ? ((value - peak) / peak) * 100 : 0;
+      result.push([timestamp, drawdown]);
+    });
+
+    return result;
+  }
+
   // ─── Rendering ────────────────────────────────────────────────────────────
 
   // Pure: formats an axis value as "1 000 PLN" — space-grouped every 3
@@ -120,6 +149,14 @@
     var grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
     var sign = rounded < 0 ? '-' : '';
     return sign + grouped + ' ' + unit;
+  }
+
+  // Pure: formats a drawdown value as "-12%". No decimals, matching the
+  // integer-PLN style of formatAxisAmount. Relies on JS stringifying -0 as
+  // "0" (no minus sign), so no special-casing is needed for values that
+  // round to zero.
+  function formatPercent(value) {
+    return Math.round(value) + '%';
   }
 
   function findOriginalChart(wrapper) {
@@ -168,59 +205,16 @@
     trySync();
   }
 
-  function renderChart(container, performanceData, unit, wrapper) {
-    var formatter = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: unit });
+  // Polls for window.Highcharts (only available once the portal's own script
+  // has run) and calls back once it exists, capped at HIGHCHARTS_POLL_MAX_TRIES
+  // attempts. Shared by every renderer here so each doesn't reimplement the
+  // same wait loop.
+  function withHighcharts(callback) {
     var tries = 0;
 
-    function tryRender() {
+    function attempt() {
       if (window.Highcharts) {
-        var chart = window.Highcharts.chart(container, {
-          chart: { type: 'area' },
-          title: { text: null },
-          credits: { enabled: false },
-          xAxis: {
-            type: 'datetime',
-            labels: {
-              formatter: function () {
-                return Highcharts.dateFormat('%d.%m.%Y', this.value);
-              }
-            }
-          },
-          yAxis: {
-            title: { text: null },
-            labels: {
-              formatter: function () {
-                return formatAxisAmount(this.value, unit);
-              }
-            },
-            plotLines: [{ value: 0, width: 1, color: '#999' }]
-          },
-          tooltip: {
-            formatter: function () {
-              return Highcharts.dateFormat('%Y-%m-%d', this.x) + '<br/>' + formatter.format(this.y);
-            }
-          },
-          legend: { enabled: false },
-          plotOptions: {
-            area: {
-              threshold: 0,
-              zoneAxis: 'y',
-              marker: { enabled: false }
-            }
-          },
-          series: [
-            {
-              name: 'Wynik',
-              data: performanceData,
-              zones: [
-                { value: 0, color: '#d9534f' },
-                { color: '#5cb85c' }
-              ]
-            }
-          ]
-        });
-
-        syncPeriodSelection(wrapper, chart);
+        callback(window.Highcharts);
         return;
       }
 
@@ -229,38 +223,135 @@
         console.error('[Conseq Performance Chart] window.Highcharts never became available, giving up');
         return;
       }
-      setTimeout(tryRender, HIGHCHARTS_POLL_MS);
+      setTimeout(attempt, HIGHCHARTS_POLL_MS);
     }
 
-    tryRender();
+    attempt();
+  }
+
+  function renderChart(container, performanceData, unit, wrapper) {
+    var formatter = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: unit });
+
+    withHighcharts(function (Highcharts) {
+      var chart = Highcharts.chart(container, {
+        chart: { type: 'area' },
+        title: { text: null },
+        credits: { enabled: false },
+        xAxis: {
+          type: 'datetime',
+          labels: {
+            formatter: function () {
+              return Highcharts.dateFormat('%d.%m.%Y', this.value);
+            }
+          }
+        },
+        yAxis: {
+          title: { text: null },
+          labels: {
+            formatter: function () {
+              return formatAxisAmount(this.value, unit);
+            }
+          },
+          plotLines: [{ value: 0, width: 1, color: '#999' }]
+        },
+        tooltip: {
+          formatter: function () {
+            return Highcharts.dateFormat('%Y-%m-%d', this.x) + '<br/>' + formatter.format(this.y);
+          }
+        },
+        legend: { enabled: false },
+        plotOptions: {
+          area: {
+            threshold: 0,
+            zoneAxis: 'y',
+            marker: { enabled: false }
+          }
+        },
+        series: [
+          {
+            name: 'Wynik',
+            data: performanceData,
+            zones: [
+              { value: 0, color: '#d9534f' },
+              { color: '#5cb85c' }
+            ]
+          }
+        ]
+      });
+
+      syncPeriodSelection(wrapper, chart);
+    });
+  }
+
+  function renderDrawdownChart(container, drawdownData, wrapper) {
+    withHighcharts(function (Highcharts) {
+      var chart = Highcharts.chart(container, {
+        chart: { type: 'area' },
+        title: { text: null },
+        credits: { enabled: false },
+        xAxis: {
+          type: 'datetime',
+          labels: {
+            formatter: function () {
+              return Highcharts.dateFormat('%d.%m.%Y', this.value);
+            }
+          }
+        },
+        yAxis: {
+          title: { text: null },
+          max: 0,
+          labels: {
+            formatter: function () {
+              return formatPercent(this.value);
+            }
+          }
+        },
+        tooltip: {
+          formatter: function () {
+            return Highcharts.dateFormat('%Y-%m-%d', this.x) + '<br/>' + formatPercent(this.y);
+          }
+        },
+        legend: { enabled: false },
+        plotOptions: {
+          area: {
+            threshold: 0,
+            color: '#d9534f',
+            fillOpacity: 0.3,
+            marker: { enabled: false }
+          }
+        },
+        series: [
+          { name: 'Obsunięcie', data: drawdownData }
+        ]
+      });
+
+      syncPeriodSelection(wrapper, chart);
+    });
   }
 
   // ─── Injection ────────────────────────────────────────────────────────────
 
-  function buildPerformanceContainer(wrapper) {
-    var originalFigure = wrapper.closest('figure.chart') || wrapper.parentElement;
-
+  function buildChartContainer(afterElement, height, options) {
     var figure = document.createElement('figure');
-    figure.className = 'chart chart--conseq-performance';
+    figure.className = 'chart ' + options.figureClass;
 
     var title = document.createElement('div');
     title.className = 'chart-performance__title';
-    title.textContent = 'Wynik (zysk / strata)';
+    title.textContent = options.title;
     title.style.fontWeight = 'bold';
     title.style.marginBottom = '8px';
 
     var chartDiv = document.createElement('div');
-    chartDiv.className = 'conseq-performance-chart';
-    var height = wrapper.getAttribute('data-height') || '300';
+    chartDiv.className = options.chartClass;
     chartDiv.style.height = height + 'px';
     chartDiv.style.width = '100%';
 
     figure.appendChild(title);
     figure.appendChild(chartDiv);
 
-    originalFigure.insertAdjacentElement('afterend', figure);
+    afterElement.insertAdjacentElement('afterend', figure);
 
-    return chartDiv;
+    return { figure: figure, chartDiv: chartDiv };
   }
 
   function processChart(wrapper) {
@@ -278,8 +369,28 @@
       return;
     }
 
-    var container = buildPerformanceContainer(wrapper);
-    renderChart(container, performanceData, series.unit, wrapper);
+    var originalFigure = wrapper.closest('figure.chart') || wrapper.parentElement;
+    var height = wrapper.getAttribute('data-height') || '300';
+
+    var performanceContainer = buildChartContainer(originalFigure, height, {
+      figureClass: 'chart--conseq-performance',
+      chartClass: 'conseq-performance-chart',
+      title: 'Wynik (zysk / strata)'
+    });
+    renderChart(performanceContainer.chartDiv, performanceData, series.unit, wrapper);
+
+    var drawdownData = computeDrawdownSeries(series.currentPoints);
+    if (!drawdownData) {
+      console.warn('[Conseq Performance Chart] could not compute drawdown series, skipping drawdown chart');
+      return;
+    }
+
+    var drawdown = buildChartContainer(performanceContainer.figure, height, {
+      figureClass: 'chart--conseq-drawdown',
+      chartClass: 'conseq-drawdown-chart',
+      title: 'Obsunięcie kapitału (drawdown)'
+    });
+    renderDrawdownChart(drawdown.chartDiv, drawdownData, wrapper);
   }
 
   function processAll(root) {
@@ -316,7 +427,9 @@
       parseChartDataAttr: parseChartDataAttr,
       extractSeriesFromRecords: extractSeriesFromRecords,
       computePerformanceSeries: computePerformanceSeries,
-      formatAxisAmount: formatAxisAmount
+      formatAxisAmount: formatAxisAmount,
+      computeDrawdownSeries: computeDrawdownSeries,
+      formatPercent: formatPercent
     };
   }
 })();
