@@ -108,11 +108,16 @@
   }
 
   // Pure: for each point, how far below the running peak-so-far it is, as a
-  // percentage (always <= 0). Divides by the peak itself (which only ever
-  // rises) rather than by the current value, so unlike a raw profit-percent
-  // series this never blows up near a zero crossing. Guards peak <= 0 (only
-  // possible before the very first positive point) to avoid a division that
-  // would flip the sign the wrong way.
+  // percentage (always <= 0). Fed the cumulative-profit series (not raw
+  // portfolio value): the latter climbs on every deposit regardless of
+  // performance, which made "drawdown" mostly reflect contribution timing
+  // rather than the investment actually losing ground. Divides by the peak
+  // itself (which only ever rises) rather than by the current value, so
+  // unlike a raw percent-of-current series this never blows up near a zero
+  // crossing. Guards peak <= 0 — expected before the investment has ever
+  // turned a profit, in which case drawdown reads flat 0 until the first
+  // profitable peak, rather than producing a wild percentage off a
+  // near-zero or negative denominator.
   function computeDrawdownSeries(points) {
     if (!points || points.length === 0) return null;
 
@@ -151,12 +156,17 @@
     return sign + grouped + ' ' + unit;
   }
 
-  // Pure: formats a drawdown value as "-12%". No decimals, matching the
-  // integer-PLN style of formatAxisAmount. Relies on JS stringifying -0 as
-  // "0" (no minus sign), so no special-casing is needed for values that
-  // round to zero.
+  // Pure: formats a drawdown value as "-2.4%" — one decimal place, since
+  // profit-based drawdowns are often well under 1% and whole-percent
+  // rounding flattened them all to "0%". toFixed(1) keeps a "-" sign even
+  // when a negative value rounds to zero (e.g. -0.04 -> "-0.0"), so that
+  // case is normalized to a plain "0.0%" explicitly.
   function formatPercent(value) {
-    return Math.round(value) + '%';
+    var rounded = value.toFixed(1);
+    if (Number(rounded) === 0) {
+      rounded = (0).toFixed(1);
+    }
+    return rounded + '%';
   }
 
   function findOriginalChart(wrapper) {
@@ -379,7 +389,7 @@
     });
     renderChart(performanceContainer.chartDiv, performanceData, series.unit, wrapper);
 
-    var drawdownData = computeDrawdownSeries(series.currentPoints);
+    var drawdownData = computeDrawdownSeries(performanceData);
     if (!drawdownData) {
       console.warn('[Conseq Performance Chart] could not compute drawdown series, skipping drawdown chart');
       return;

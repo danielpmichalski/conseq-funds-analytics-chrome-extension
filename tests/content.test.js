@@ -184,15 +184,16 @@ test('computeDrawdownSeries', async (t) => {
 
 test('formatPercent', async (t) => {
   await t.test('formats a negative drawdown', () => {
-    assert.equal(formatPercent(-12), '-12%');
+    assert.equal(formatPercent(-12), '-12.0%');
   });
 
-  await t.test('rounds to whole numbers', () => {
-    assert.equal(formatPercent(-12.6), '-13%');
+  await t.test('keeps one decimal of precision', () => {
+    assert.equal(formatPercent(-2.449), '-2.4%');
+    assert.equal(formatPercent(-0.3), '-0.3%');
   });
 
   await t.test('handles zero without a stray minus sign', () => {
-    assert.equal(formatPercent(-0.4), '0%');
-    assert.equal(formatPercent(0), '0%');
+    assert.equal(formatPercent(-0.04), '0.0%');
+    assert.equal(formatPercent(0), '0.0%');
   });
 });
