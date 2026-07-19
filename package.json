@@ -1,0 +1,9 @@
+{
+  "name": "conseq-funds-analytics-chrome-extension",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Unit tests for the pure logic in extension/content.js. No dependencies, no build step — the extension itself is loaded unpacked as plain vanilla JS.",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}
