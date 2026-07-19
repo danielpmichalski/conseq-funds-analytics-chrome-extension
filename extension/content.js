@@ -464,7 +464,7 @@
     return stored;
   }
 
-  function renderChart(container, performanceData, unit, wrapper, latestPaidValue) {
+  function renderChart(container, performanceData, unit, wrapper, latestPaidValue, onActualCapitalChange) {
     var formatter = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: unit });
 
     withHighcharts(function (Highcharts) {
@@ -530,15 +530,16 @@
           chart.series[1].setData([], false);
           chart.series[1].setVisible(false, false);
           chart.redraw();
-          return;
+        } else {
+          var adjusted = computeAdjustedPerformanceSeries(performanceData, latestPaidValue, value);
+          if (adjusted) {
+            chart.series[1].setData(adjusted, false);
+            chart.series[1].setVisible(true, false);
+            chart.redraw();
+          }
         }
 
-        var adjusted = computeAdjustedPerformanceSeries(performanceData, latestPaidValue, value);
-        if (!adjusted) return;
-
-        chart.series[1].setData(adjusted, false);
-        chart.series[1].setVisible(true, false);
-        chart.redraw();
+        if (onActualCapitalChange) onActualCapitalChange(value);
       }
 
       var storedActualCapital = buildActualCapitalInput(container.figure, container.chartDiv, unit, applyActualCapital);
@@ -548,7 +549,7 @@
 
   // Plots the profit line together with its running peak, so it's visually
   // obvious what the drawdown chart below is measured against.
-  function renderCumulativeProfitChart(container, performanceData, peakData, unit, wrapper) {
+  function renderCumulativeProfitChart(container, performanceData, peakData, unit, wrapper, latestPaidValue, registerActualCapitalListener) {
     var formatter = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: unit });
 
     withHighcharts(function (Highcharts) {
@@ -589,11 +590,57 @@
         },
         series: [
           { name: 'Wynik', data: performanceData, color: '#337ab7' },
-          { name: 'Szczyt', data: peakData, color: '#5cb85c', dashStyle: 'ShortDash' }
+          { name: 'Szczyt', data: peakData, color: '#5cb85c', dashStyle: 'ShortDash' },
+          {
+            name: 'Wynik (rzeczywisty kapitał)',
+            data: [],
+            visible: false,
+            color: '#d9534f',
+            dashStyle: 'ShortDash',
+            marker: { enabled: false }
+          },
+          {
+            name: 'Szczyt (rzeczywisty kapitał)',
+            data: [],
+            visible: false,
+            color: '#f0ad4e',
+            dashStyle: 'Dot',
+            marker: { enabled: false }
+          }
         ]
       });
 
       syncPeriodSelection(wrapper, chart);
+
+      // Mirrors renderChart's own actual-capital handling, but there's no
+      // input here — this chart just reacts to the one on the Wynik chart
+      // above it, via registerActualCapitalListener, plus applies whatever
+      // was already stored on its own first render.
+      function applyActualCapital(value) {
+        if (value === null || typeof latestPaidValue !== 'number') {
+          chart.series[2].setData([], false);
+          chart.series[2].setVisible(false, false);
+          chart.series[3].setData([], false);
+          chart.series[3].setVisible(false, false);
+          chart.redraw();
+          return;
+        }
+
+        var adjustedPerformance = computeAdjustedPerformanceSeries(performanceData, latestPaidValue, value);
+        if (!adjustedPerformance) return;
+        var adjustedPeak = computeRunningPeakSeries(adjustedPerformance);
+
+        chart.series[2].setData(adjustedPerformance, false);
+        chart.series[2].setVisible(true, false);
+        chart.series[3].setData(adjustedPeak, false);
+        chart.series[3].setVisible(true, false);
+        chart.redraw();
+      }
+
+      if (registerActualCapitalListener) registerActualCapitalListener(applyActualCapital);
+
+      var storedActualCapital = readStoredActualCapital();
+      if (storedActualCapital !== null) applyActualCapital(storedActualCapital);
     });
   }
 
@@ -804,7 +851,16 @@
       title: 'Wynik (zysk / strata)'
     });
     var latestPaidValue = latestPointValue(series.paidPoints);
-    renderChart(performanceContainer, performanceData, series.unit, wrapper, latestPaidValue);
+
+    // The Wynik chart owns the actual-capital input; the cumulative chart
+    // just listens for changes to it, so the two stay in sync without a
+    // second, redundant input box.
+    var actualCapitalListeners = [];
+    function notifyActualCapitalListeners(value) {
+      actualCapitalListeners.forEach(function (listener) { listener(value); });
+    }
+
+    renderChart(performanceContainer, performanceData, series.unit, wrapper, latestPaidValue, notifyActualCapitalListeners);
 
     var peakData = computeRunningPeakSeries(performanceData);
     var cumulativeContainer = buildChartContainer(performanceContainer.figure, height, {
@@ -812,7 +868,9 @@
       chartClass: 'conseq-cumulative-profit-chart',
       title: 'Zysk skumulowany na tle szczytu'
     });
-    renderCumulativeProfitChart(cumulativeContainer.chartDiv, performanceData, peakData, series.unit, wrapper);
+    renderCumulativeProfitChart(cumulativeContainer.chartDiv, performanceData, peakData, series.unit, wrapper, latestPaidValue, function (applyFn) {
+      actualCapitalListeners.push(applyFn);
+    });
 
     var drawdownData = computeDrawdownSeries(performanceData);
     if (!drawdownData) {
