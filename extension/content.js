@@ -115,16 +115,20 @@
   }
 
   // Pure: for each point, how far below the running peak-so-far it is, as a
-  // percentage (always <= 0). Fed the cumulative-profit series (not raw
-  // portfolio value): the latter climbs on every deposit regardless of
-  // performance, which made "drawdown" mostly reflect contribution timing
-  // rather than the investment actually losing ground. Divides by the peak
-  // itself (which only ever rises) rather than by the current value, so
-  // unlike a raw percent-of-current series this never blows up near a zero
-  // crossing. Guards peak <= 0 — expected before the investment has ever
-  // turned a profit, in which case drawdown reads flat 0 until the first
-  // profitable peak, rather than producing a wild percentage off a
-  // near-zero or negative denominator.
+  // percentage (always <= 0), plus the same distance in absolute currency
+  // (value - peak, always <= 0) as a third array element — shown alongside
+  // the percentage in the drawdown chart's tooltip so the size of a drawdown
+  // is visible in real money, not just relative terms. Fed the
+  // cumulative-profit series (not raw portfolio value): the latter climbs on
+  // every deposit regardless of performance, which made "drawdown" mostly
+  // reflect contribution timing rather than the investment actually losing
+  // ground. The percentage divides by the peak itself (which only ever
+  // rises) rather than by the current value, so unlike a raw
+  // percent-of-current series this never blows up near a zero crossing.
+  // Guards peak <= 0 — expected before the investment has ever turned a
+  // profit, in which case drawdown reads flat 0 until the first profitable
+  // peak, rather than producing a wild percentage off a near-zero or
+  // negative denominator.
   function computeDrawdownSeries(points) {
     if (!points || points.length === 0) return null;
 
@@ -142,7 +146,8 @@
         peak = value;
       }
       var drawdown = peak > 0 ? ((value - peak) / peak) * 100 : 0;
-      result.push([timestamp, drawdown]);
+      var absolute = peak > 0 ? value - peak : 0;
+      result.push([timestamp, drawdown, absolute]);
     });
 
     return result;
@@ -456,7 +461,9 @@
     });
   }
 
-  function renderDrawdownChart(container, drawdownData, wrapper) {
+  function renderDrawdownChart(container, drawdownData, unit, wrapper) {
+    var formatter = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: unit });
+
     withHighcharts(function (Highcharts) {
       var chart = Highcharts.chart(container, {
         chart: { type: 'area' },
@@ -481,7 +488,8 @@
         },
         tooltip: {
           formatter: function () {
-            return Highcharts.dateFormat('%Y-%m-%d', this.x) + '<br/>' + formatPercent(this.y);
+            return Highcharts.dateFormat('%Y-%m-%d', this.x) + '<br/>' +
+              formatPercent(this.y) + ' (' + formatter.format(this.point.absolute) + ')';
           }
         },
         legend: { enabled: false },
@@ -494,7 +502,7 @@
           }
         },
         series: [
-          { name: 'Obsunięcie', data: drawdownData }
+          { name: 'Obsunięcie', keys: ['x', 'y', 'absolute'], data: drawdownData }
         ]
       });
 
@@ -680,7 +688,7 @@
       chartClass: 'conseq-drawdown-chart',
       title: 'Obsunięcie kapitału (drawdown)'
     });
-    renderDrawdownChart(drawdown.chartDiv, drawdownData, wrapper);
+    renderDrawdownChart(drawdown.chartDiv, drawdownData, series.unit, wrapper);
 
     var periodChangeData = computePeriodChangeSeries(performanceData, PERIOD_CHANGE_DEFAULT);
     if (!periodChangeData) {

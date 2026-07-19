@@ -157,18 +157,18 @@ test('formatAxisAmount', async (t) => {
 });
 
 test('computeDrawdownSeries', async (t) => {
-  await t.test('is zero while at or above the running peak, negative below it', () => {
+  await t.test('is zero while at or above the running peak, negative below it, with absolute distance as a third element', () => {
     const result = computeDrawdownSeries([[1, 100], [2, 150], [3, 120], [4, 150], [5, 90]]);
-    assert.deepEqual(result, [[1, 0], [2, 0], [3, -20], [4, 0], [5, -40]]);
+    assert.deepEqual(result, [[1, 0, 0], [2, 0, 0], [3, -20, -30], [4, 0, 0], [5, -40, -60]]);
   });
 
   await t.test('does not assume the input is already sorted by timestamp', () => {
     const result = computeDrawdownSeries([[3, 90], [1, 100], [2, 150]]);
-    assert.deepEqual(result, [[1, 0], [2, 0], [3, -40]]);
+    assert.deepEqual(result, [[1, 0, 0], [2, 0, 0], [3, -40, -60]]);
   });
 
   await t.test('a single point has zero drawdown', () => {
-    assert.deepEqual(computeDrawdownSeries([[1, 100]]), [[1, 0]]);
+    assert.deepEqual(computeDrawdownSeries([[1, 100]]), [[1, 0, 0]]);
   });
 
   await t.test('returns null for an empty array', () => {
@@ -181,7 +181,7 @@ test('computeDrawdownSeries', async (t) => {
 
   await t.test('guards against a non-positive peak instead of dividing by it', () => {
     const result = computeDrawdownSeries([[1, -50], [2, -100]]);
-    assert.deepEqual(result, [[1, 0], [2, 0]]);
+    assert.deepEqual(result, [[1, 0, 0], [2, 0, 0]]);
   });
 });
 
