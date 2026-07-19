@@ -9,6 +9,9 @@
   var PROCESSED_ATTR = 'data-conseq-perf-injected';
   var HIGHCHARTS_POLL_MS = 250;
   var HIGHCHARTS_POLL_MAX_TRIES = 20;
+  var ORIGINAL_CHART_SELECTOR = '[data-highcharts-chart]';
+  var SYNC_POLL_MS = 250;
+  var SYNC_POLL_MAX_TRIES = 20;
 
   // ─── Extraction ───────────────────────────────────────────────────────────
 
@@ -86,13 +89,59 @@
 
   // ─── Rendering ────────────────────────────────────────────────────────────
 
-  function renderChart(container, performanceData, unit) {
+  function findOriginalChart(wrapper) {
+    var target = wrapper.querySelector(ORIGINAL_CHART_SELECTOR);
+    if (!target || !window.Highcharts || !Array.isArray(window.Highcharts.charts)) {
+      return null;
+    }
+    var index = Number(target.getAttribute('data-highcharts-chart'));
+    if (isNaN(index)) return null;
+
+    var chart = window.Highcharts.charts[index];
+    return (chart && chart.xAxis && chart.xAxis[0]) ? chart : null;
+  }
+
+  // Mirrors the original chart's range-selector (YTD / 1R / 3L / 5L / Max)
+  // onto our chart, since those buttons only call setExtremes() on the
+  // original chart's own xAxis and have no idea we exist.
+  function syncPeriodSelection(wrapper, ourChart) {
+    var tries = 0;
+
+    function trySync() {
+      var originalChart = findOriginalChart(wrapper);
+      if (!originalChart) {
+        tries += 1;
+        if (tries >= SYNC_POLL_MAX_TRIES) {
+          console.warn('[Conseq Performance Chart] original chart never found; period buttons will not affect this chart');
+          return;
+        }
+        setTimeout(trySync, SYNC_POLL_MS);
+        return;
+      }
+
+      var originalAxis = originalChart.xAxis[0];
+      var ourAxis = ourChart.xAxis[0];
+
+      var extremes = originalAxis.getExtremes();
+      if (typeof extremes.min === 'number' && typeof extremes.max === 'number') {
+        ourAxis.setExtremes(extremes.min, extremes.max, true, false);
+      }
+
+      Highcharts.addEvent(originalAxis, 'afterSetExtremes', function (e) {
+        ourAxis.setExtremes(e.min, e.max);
+      });
+    }
+
+    trySync();
+  }
+
+  function renderChart(container, performanceData, unit, wrapper) {
     var formatter = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: unit });
     var tries = 0;
 
     function tryRender() {
       if (window.Highcharts) {
-        window.Highcharts.chart(container, {
+        var chart = window.Highcharts.chart(container, {
           chart: { type: 'area' },
           title: { text: null },
           credits: { enabled: false },
@@ -125,6 +174,8 @@
             }
           ]
         });
+
+        syncPeriodSelection(wrapper, chart);
         return;
       }
 
@@ -183,7 +234,7 @@
     }
 
     var container = buildPerformanceContainer(wrapper);
-    renderChart(container, performanceData, series.unit);
+    renderChart(container, performanceData, series.unit, wrapper);
   }
 
   function processAll(root) {

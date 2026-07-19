@@ -31,6 +31,7 @@ Zips the contents of `extension/` into `conseq-performance-chart.zip` at the rep
 - It looks for `.highchart.fund-compare[data-id]` chart containers, and inside each one reads the two `.chart-definition` elements by their `data-fundname` attribute: `Wartość wpłat` (amount paid in) and `Aktualna wartość inwestycji` (current value).
 - It computes `current − paid` for every matching timestamp and renders the result as a new chart, inserted right after the original chart's `<figure>`, using the portal's own global `Highcharts` object.
 - A `MutationObserver` re-scans the page as it changes (e.g. carousel slides loading), so the chart appears even if the original loads asynchronously. Each processed chart is marked to avoid inserting duplicates.
+- The original chart's period buttons (YTD / 1R / 3L / 5L / Max) are Highcharts' own range selector — they zoom the original chart's x-axis, nothing more. The extension finds that chart instance (via the `data-highcharts-chart` index Highcharts stamps on it) and mirrors its visible date range onto the new chart whenever it changes, so both charts stay in sync.
 
 ## Project structure
 
