@@ -8,7 +8,7 @@ A personal, unpublished Chrome extension (Manifest V3) for the Conseq Funds clie
 
 It does **not** scrape, transmit, or store any data off-page — it reads chart data already embedded in the portal's HTML and renders a new chart in-page using the portal's own already-loaded Highcharts instance.
 
-Management fees deducted from invested amounts are **not** factored in — no fee figure is present in the chart data the extension has access to. The performance chart is gross, not net of fees. Don't add fee logic unless the user points you at where the fee value actually lives on the site.
+Management fees appear to already be netted into the `Wartość wpłat` (amount paid in) series itself: the portal's account summary header labels the equivalent figure "Wpłaty po odliczeniu odkupów i opłat" ("deposits after deducting redemptions **and fees**"), and that value matches the series. So `current − paid` is likely already net of fees, not gross — there's no separate fee figure to subtract, and no fee logic to add. This is inferred from the label/figure match, not from an itemized fee breakdown, so treat it as a reasonable working assumption rather than a certainty.
 
 ## Architecture
 
