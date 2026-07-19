@@ -12,6 +12,13 @@
   var ORIGINAL_CHART_SELECTOR = '[data-highcharts-chart]';
   var SYNC_POLL_MS = 250;
   var SYNC_POLL_MAX_TRIES = 20;
+  var PERIOD_CHANGE_OPTIONS = [
+    { key: 'week', label: 'Tydzień' },
+    { key: 'month', label: 'Miesiąc' },
+    { key: 'quarter', label: 'Kwartał' },
+    { key: 'year', label: 'Rok' }
+  ];
+  var PERIOD_CHANGE_DEFAULT = 'month';
 
   // ─── Extraction ───────────────────────────────────────────────────────────
 
@@ -168,24 +175,78 @@
     return result;
   }
 
-  // Pure: profit(t) - profit(t-1) for each consecutive pair, in plain
-  // currency — no percentage math, so none of the drawdown/percentage
-  // pitfalls (near-zero denominators, deposit-timing artifacts) apply here.
-  // Shows momentum directly: which stretches were actually gaining vs. flat
-  // vs. losing, which the cumulative line tends to visually smear together.
-  // The first point has no prior to diff against, so the output has one
-  // fewer point than the input.
-  function computePeriodChangeSeries(points) {
-    if (!points || points.length < 2) return null;
+  // Pure: which bucket a timestamp falls into for a given period size. Week
+  // buckets are epoch-relative (floor(ts / 7 days)) rather than aligned to
+  // ISO week boundaries — this file has no date library, and consistent,
+  // monotonically-increasing buckets are all that's needed here, not
+  // calendar-exact week starts. Month/quarter/year use UTC calendar fields
+  // (the underlying timestamps are day-granularity, so UTC vs. local doesn't
+  // shift the bucket). A falsy periodType makes every point its own bucket
+  // (identity bucketing), which is what gives raw, unbucketed period-change.
+  function getBucketKey(timestamp, periodType) {
+    if (!periodType) return timestamp;
+
+    var date = new Date(timestamp);
+    var year = date.getUTCFullYear();
+
+    switch (periodType) {
+      case 'week':
+        return 'W' + Math.floor(timestamp / (7 * 24 * 60 * 60 * 1000));
+      case 'month':
+        return year + '-M' + date.getUTCMonth();
+      case 'quarter':
+        return year + '-Q' + Math.floor(date.getUTCMonth() / 3);
+      case 'year':
+        return String(year);
+      default:
+        return timestamp;
+    }
+  }
+
+  // Pure: collapses a point series down to one point per period bucket —
+  // the last (chronologically latest) point seen in each bucket — so a
+  // "monthly" period-change diffs month-end values against the previous
+  // month-end, not every individual day within it.
+  function bucketPointsByPeriod(points, periodType) {
+    if (!points || points.length === 0) return null;
 
     var sorted = points.slice().sort(function (a, b) {
       return a[0] - b[0];
     });
 
+    var buckets = [];
+    var lastKey = null;
+
+    sorted.forEach(function (point) {
+      var key = getBucketKey(point[0], periodType);
+      if (key !== lastKey) {
+        buckets.push(point);
+        lastKey = key;
+      } else {
+        buckets[buckets.length - 1] = point;
+      }
+    });
+
+    return buckets;
+  }
+
+  // Pure: profit(t) - profit(t-1) between consecutive period buckets, in
+  // plain currency — no percentage math, so none of the drawdown/percentage
+  // pitfalls (near-zero denominators, deposit-timing artifacts) apply here.
+  // Shows momentum directly: which stretches were actually gaining vs. flat
+  // vs. losing, which the cumulative line tends to visually smear together.
+  // periodType selects the bucket size ('week'/'month'/'quarter'/'year');
+  // omitting it diffs every raw point against its immediate predecessor.
+  // The first bucket has no prior to diff against, so the output has one
+  // fewer point than the bucketed series.
+  function computePeriodChangeSeries(points, periodType) {
+    var bucketed = bucketPointsByPeriod(points, periodType);
+    if (!bucketed || bucketed.length < 2) return null;
+
     var result = [];
-    for (var i = 1; i < sorted.length; i++) {
-      var timestamp = sorted[i][0];
-      var change = sorted[i][1] - sorted[i - 1][1];
+    for (var i = 1; i < bucketed.length; i++) {
+      var timestamp = bucketed[i][0];
+      var change = bucketed[i][1] - bucketed[i - 1][1];
       result.push([timestamp, change]);
     }
 
@@ -441,11 +502,65 @@
     });
   }
 
-  function renderPeriodChangeChart(container, periodChangeData, unit, wrapper) {
+  // Builds the "Tydzień / Miesiąc / Kwartał / Rok" button row above the
+  // period-change chart, styled to match the original chart's own range
+  // selector buttons (highcharts-button-normal / -pressed): a light-gray
+  // rounded box with plain gray text normally, switching to a pale-blue box
+  // with bold black text when active — see the reference SVG in todo.txt.
+  // onSelect is called with the clicked option's key; the caller owns
+  // re-rendering, this just owns the row's own markup and active styling.
+  function buildPeriodButtons(figure, chartDiv, options, defaultKey, onSelect) {
+    var row = document.createElement('div');
+    row.className = 'conseq-period-buttons';
+    row.style.marginBottom = '8px';
+    row.style.display = 'flex';
+    row.style.gap = '4px';
+
+    var buttons = {};
+
+    function applyButtonStyle(button, active) {
+      button.style.background = active ? '#e6ebf5' : '#f7f7f7';
+      button.style.color = active ? '#000000' : '#333333';
+      button.style.fontWeight = active ? 'bold' : 'normal';
+    }
+
+    function setActive(key) {
+      Object.keys(buttons).forEach(function (buttonKey) {
+        applyButtonStyle(buttons[buttonKey], buttonKey === key);
+      });
+    }
+
+    options.forEach(function (option) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = option.label;
+      button.style.border = 'none';
+      button.style.borderRadius = '2px';
+      button.style.padding = '4px 10px';
+      button.style.fontSize = '12px';
+      button.style.fontFamily = 'inherit';
+      button.style.cursor = 'pointer';
+      button.addEventListener('click', function () {
+        setActive(option.key);
+        onSelect(option.key);
+      });
+      buttons[option.key] = button;
+      row.appendChild(button);
+    });
+
+    setActive(defaultKey);
+    figure.insertBefore(row, chartDiv);
+  }
+
+  // Renders at PERIOD_CHANGE_DEFAULT first, then keeps performanceData
+  // around so the period buttons can recompute a fresh series for whichever
+  // bucket size the user picks, via setData rather than a full re-render.
+  function renderPeriodChangeChart(container, performanceData, unit, wrapper) {
     var formatter = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: unit });
+    var initialData = computePeriodChangeSeries(performanceData, PERIOD_CHANGE_DEFAULT);
 
     withHighcharts(function (Highcharts) {
-      var chart = Highcharts.chart(container, {
+      var chart = Highcharts.chart(container.chartDiv, {
         chart: { type: 'column' },
         title: { text: null },
         credits: { enabled: false },
@@ -479,11 +594,20 @@
           }
         },
         series: [
-          { name: 'Zmiana', data: periodChangeData, color: '#5cb85c' }
+          { name: 'Zmiana', data: initialData, color: '#5cb85c' }
         ]
       });
 
       syncPeriodSelection(wrapper, chart);
+
+      buildPeriodButtons(container.figure, container.chartDiv, PERIOD_CHANGE_OPTIONS, PERIOD_CHANGE_DEFAULT, function (periodType) {
+        var data = computePeriodChangeSeries(performanceData, periodType);
+        if (!data) {
+          console.warn('[Conseq Performance Chart] not enough points for a "' + periodType + '" period change');
+          return;
+        }
+        chart.series[0].setData(data);
+      });
     });
   }
 
@@ -558,7 +682,7 @@
     });
     renderDrawdownChart(drawdown.chartDiv, drawdownData, wrapper);
 
-    var periodChangeData = computePeriodChangeSeries(performanceData);
+    var periodChangeData = computePeriodChangeSeries(performanceData, PERIOD_CHANGE_DEFAULT);
     if (!periodChangeData) {
       console.warn('[Conseq Performance Chart] could not compute period-over-period change series, skipping that chart');
       return;
@@ -569,7 +693,7 @@
       chartClass: 'conseq-period-change-chart',
       title: 'Zmiana wyniku okres do okresu'
     });
-    renderPeriodChangeChart(periodChange.chartDiv, periodChangeData, series.unit, wrapper);
+    renderPeriodChangeChart(periodChange, performanceData, series.unit, wrapper);
   }
 
   function processAll(root) {
@@ -610,7 +734,8 @@
       computeDrawdownSeries: computeDrawdownSeries,
       formatPercent: formatPercent,
       computeRunningPeakSeries: computeRunningPeakSeries,
-      computePeriodChangeSeries: computePeriodChangeSeries
+      computePeriodChangeSeries: computePeriodChangeSeries,
+      bucketPointsByPeriod: bucketPointsByPeriod
     };
   }
 })();

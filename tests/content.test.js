@@ -10,7 +10,8 @@ const {
   computeDrawdownSeries,
   formatPercent,
   computeRunningPeakSeries,
-  computePeriodChangeSeries
+  computePeriodChangeSeries,
+  bucketPointsByPeriod
 } = require('../extension/content.js');
 
 test('parseChartDataAttr', async (t) => {
@@ -255,5 +256,80 @@ test('computePeriodChangeSeries', async (t) => {
 
   await t.test('returns null for null input', () => {
     assert.equal(computePeriodChangeSeries(null), null);
+  });
+
+  await t.test('with a "month" period, diffs month-end values instead of every raw point', () => {
+    const points = [
+      [Date.UTC(2024, 0, 5), 100],
+      [Date.UTC(2024, 0, 20), 110],
+      [Date.UTC(2024, 1, 10), 130],
+      [Date.UTC(2024, 2, 25), 125]
+    ];
+    const result = computePeriodChangeSeries(points, 'month');
+    assert.deepEqual(result, [
+      [Date.UTC(2024, 1, 10), 20],
+      [Date.UTC(2024, 2, 25), -5]
+    ]);
+  });
+
+  await t.test('with a "quarter" period, points in the same quarter collapse into one bucket', () => {
+    const points = [
+      [Date.UTC(2024, 0, 5), 100],
+      [Date.UTC(2024, 1, 10), 130],
+      [Date.UTC(2024, 2, 25), 125],
+      [Date.UTC(2024, 3, 15), 140]
+    ];
+    const result = computePeriodChangeSeries(points, 'quarter');
+    assert.deepEqual(result, [[Date.UTC(2024, 3, 15), 15]]);
+  });
+
+  await t.test('with a "year" period, points in the same year collapse into one bucket', () => {
+    const points = [
+      [Date.UTC(2023, 5, 1), 50],
+      [Date.UTC(2023, 11, 31), 80],
+      [Date.UTC(2024, 2, 1), 100]
+    ];
+    const result = computePeriodChangeSeries(points, 'year');
+    assert.deepEqual(result, [[Date.UTC(2024, 2, 1), 20]]);
+  });
+
+  await t.test('with a "week" period, buckets by epoch-relative 7-day windows', () => {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const points = [[0, 10], [3 * dayMs, 15], [10 * dayMs, 25]];
+    const result = computePeriodChangeSeries(points, 'week');
+    assert.deepEqual(result, [[10 * dayMs, 10]]);
+  });
+
+  await t.test('returns null when a period has too few buckets to diff', () => {
+    const points = [[Date.UTC(2024, 0, 5), 100], [Date.UTC(2024, 0, 20), 110]];
+    assert.equal(computePeriodChangeSeries(points, 'month'), null);
+  });
+});
+
+test('bucketPointsByPeriod', async (t) => {
+  await t.test('with no periodType, every point is its own bucket (identity)', () => {
+    const points = [[3, 30], [1, 10], [2, 20]];
+    assert.deepEqual(bucketPointsByPeriod(points), [[1, 10], [2, 20], [3, 30]]);
+  });
+
+  await t.test('keeps the last (chronologically latest) point per bucket', () => {
+    const points = [
+      [Date.UTC(2024, 0, 5), 100],
+      [Date.UTC(2024, 0, 20), 110],
+      [Date.UTC(2024, 1, 10), 130]
+    ];
+    const result = bucketPointsByPeriod(points, 'month');
+    assert.deepEqual(result, [
+      [Date.UTC(2024, 0, 20), 110],
+      [Date.UTC(2024, 1, 10), 130]
+    ]);
+  });
+
+  await t.test('returns null for an empty array', () => {
+    assert.equal(bucketPointsByPeriod([]), null);
+  });
+
+  await t.test('returns null for null input', () => {
+    assert.equal(bucketPointsByPeriod(null), null);
   });
 });
