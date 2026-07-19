@@ -168,6 +168,30 @@
     return result;
   }
 
+  // Pure: profit(t) - profit(t-1) for each consecutive pair, in plain
+  // currency — no percentage math, so none of the drawdown/percentage
+  // pitfalls (near-zero denominators, deposit-timing artifacts) apply here.
+  // Shows momentum directly: which stretches were actually gaining vs. flat
+  // vs. losing, which the cumulative line tends to visually smear together.
+  // The first point has no prior to diff against, so the output has one
+  // fewer point than the input.
+  function computePeriodChangeSeries(points) {
+    if (!points || points.length < 2) return null;
+
+    var sorted = points.slice().sort(function (a, b) {
+      return a[0] - b[0];
+    });
+
+    var result = [];
+    for (var i = 1; i < sorted.length; i++) {
+      var timestamp = sorted[i][0];
+      var change = sorted[i][1] - sorted[i - 1][1];
+      result.push([timestamp, change]);
+    }
+
+    return result;
+  }
+
   // ─── Rendering ────────────────────────────────────────────────────────────
 
   // Pure: formats an axis value as "1 000 PLN" — space-grouped every 3
@@ -417,6 +441,52 @@
     });
   }
 
+  function renderPeriodChangeChart(container, periodChangeData, unit, wrapper) {
+    var formatter = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: unit });
+
+    withHighcharts(function (Highcharts) {
+      var chart = Highcharts.chart(container, {
+        chart: { type: 'column' },
+        title: { text: null },
+        credits: { enabled: false },
+        xAxis: {
+          type: 'datetime',
+          labels: {
+            formatter: function () {
+              return Highcharts.dateFormat('%d.%m.%Y', this.value);
+            }
+          }
+        },
+        yAxis: {
+          title: { text: null },
+          labels: {
+            formatter: function () {
+              return formatAxisAmount(this.value, unit);
+            }
+          },
+          plotLines: [{ value: 0, width: 1, color: '#999' }]
+        },
+        tooltip: {
+          formatter: function () {
+            return Highcharts.dateFormat('%Y-%m-%d', this.x) + '<br/>' + formatter.format(this.y);
+          }
+        },
+        legend: { enabled: false },
+        plotOptions: {
+          column: {
+            negativeColor: '#d9534f',
+            borderWidth: 0
+          }
+        },
+        series: [
+          { name: 'Zmiana', data: periodChangeData, color: '#5cb85c' }
+        ]
+      });
+
+      syncPeriodSelection(wrapper, chart);
+    });
+  }
+
   // ─── Injection ────────────────────────────────────────────────────────────
 
   function buildChartContainer(afterElement, height, options) {
@@ -487,6 +557,19 @@
       title: 'Obsunięcie kapitału (drawdown)'
     });
     renderDrawdownChart(drawdown.chartDiv, drawdownData, wrapper);
+
+    var periodChangeData = computePeriodChangeSeries(performanceData);
+    if (!periodChangeData) {
+      console.warn('[Conseq Performance Chart] could not compute period-over-period change series, skipping that chart');
+      return;
+    }
+
+    var periodChange = buildChartContainer(drawdown.figure, height, {
+      figureClass: 'chart--conseq-period-change',
+      chartClass: 'conseq-period-change-chart',
+      title: 'Zmiana wyniku okres do okresu'
+    });
+    renderPeriodChangeChart(periodChange.chartDiv, periodChangeData, series.unit, wrapper);
   }
 
   function processAll(root) {
@@ -526,7 +609,8 @@
       formatAxisAmount: formatAxisAmount,
       computeDrawdownSeries: computeDrawdownSeries,
       formatPercent: formatPercent,
-      computeRunningPeakSeries: computeRunningPeakSeries
+      computeRunningPeakSeries: computeRunningPeakSeries,
+      computePeriodChangeSeries: computePeriodChangeSeries
     };
   }
 })();

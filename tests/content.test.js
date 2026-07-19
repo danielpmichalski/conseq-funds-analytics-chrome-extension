@@ -9,7 +9,8 @@ const {
   formatAxisAmount,
   computeDrawdownSeries,
   formatPercent,
-  computeRunningPeakSeries
+  computeRunningPeakSeries,
+  computePeriodChangeSeries
 } = require('../extension/content.js');
 
 test('parseChartDataAttr', async (t) => {
@@ -225,5 +226,34 @@ test('computeRunningPeakSeries', async (t) => {
   await t.test('carries negative peaks through unchanged (no positivity guard, unlike drawdown)', () => {
     const result = computeRunningPeakSeries([[1, -50], [2, -100], [3, -20]]);
     assert.deepEqual(result, [[1, -50], [2, -50], [3, -20]]);
+  });
+});
+
+test('computePeriodChangeSeries', async (t) => {
+  await t.test('diffs each point against the previous one', () => {
+    const result = computePeriodChangeSeries([[1, 100], [2, 150], [3, 120], [4, 150]]);
+    assert.deepEqual(result, [[2, 50], [3, -30], [4, 30]]);
+  });
+
+  await t.test('does not assume the input is already sorted by timestamp', () => {
+    const result = computePeriodChangeSeries([[3, 120], [1, 100], [2, 150]]);
+    assert.deepEqual(result, [[2, 50], [3, -30]]);
+  });
+
+  await t.test('output has one fewer point than the input', () => {
+    const result = computePeriodChangeSeries([[1, 10], [2, 20], [3, 15]]);
+    assert.equal(result.length, 2);
+  });
+
+  await t.test('returns null when there is only a single point (nothing to diff against)', () => {
+    assert.equal(computePeriodChangeSeries([[1, 100]]), null);
+  });
+
+  await t.test('returns null for an empty array', () => {
+    assert.equal(computePeriodChangeSeries([]), null);
+  });
+
+  await t.test('returns null for null input', () => {
+    assert.equal(computePeriodChangeSeries(null), null);
   });
 });
