@@ -141,6 +141,33 @@
     return result;
   }
 
+  // Pure: the running peak-so-far for each point — the same peak that
+  // computeDrawdownSeries divides by. Exposed as its own series so the
+  // cumulative-profit chart can plot it alongside the raw profit line,
+  // making visible exactly what "peak" the drawdown chart below it is
+  // measured against (only ever rises or stays flat, never falls).
+  function computeRunningPeakSeries(points) {
+    if (!points || points.length === 0) return null;
+
+    var sorted = points.slice().sort(function (a, b) {
+      return a[0] - b[0];
+    });
+
+    var peak = null;
+    var result = [];
+
+    sorted.forEach(function (point) {
+      var timestamp = point[0];
+      var value = point[1];
+      if (peak === null || value > peak) {
+        peak = value;
+      }
+      result.push([timestamp, peak]);
+    });
+
+    return result;
+  }
+
   // ─── Rendering ────────────────────────────────────────────────────────────
 
   // Pure: formats an axis value as "1 000 PLN" — space-grouped every 3
@@ -293,6 +320,57 @@
     });
   }
 
+  // Plots the profit line together with its running peak, so it's visually
+  // obvious what the drawdown chart below is measured against.
+  function renderCumulativeProfitChart(container, performanceData, peakData, unit, wrapper) {
+    var formatter = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: unit });
+
+    withHighcharts(function (Highcharts) {
+      var chart = Highcharts.chart(container, {
+        chart: { type: 'line' },
+        title: { text: null },
+        credits: { enabled: false },
+        xAxis: {
+          type: 'datetime',
+          labels: {
+            formatter: function () {
+              return Highcharts.dateFormat('%d.%m.%Y', this.value);
+            }
+          }
+        },
+        yAxis: {
+          title: { text: null },
+          labels: {
+            formatter: function () {
+              return formatAxisAmount(this.value, unit);
+            }
+          },
+          plotLines: [{ value: 0, width: 1, color: '#999' }]
+        },
+        tooltip: {
+          shared: true,
+          formatter: function () {
+            var lines = [Highcharts.dateFormat('%Y-%m-%d', this.x)];
+            this.points.forEach(function (point) {
+              lines.push(point.series.name + ': ' + formatter.format(point.y));
+            });
+            return lines.join('<br/>');
+          }
+        },
+        legend: { enabled: true },
+        plotOptions: {
+          line: { marker: { enabled: false } }
+        },
+        series: [
+          { name: 'Wynik', data: performanceData, color: '#337ab7' },
+          { name: 'Szczyt', data: peakData, color: '#5cb85c', dashStyle: 'ShortDash' }
+        ]
+      });
+
+      syncPeriodSelection(wrapper, chart);
+    });
+  }
+
   function renderDrawdownChart(container, drawdownData, wrapper) {
     withHighcharts(function (Highcharts) {
       var chart = Highcharts.chart(container, {
@@ -389,13 +467,21 @@
     });
     renderChart(performanceContainer.chartDiv, performanceData, series.unit, wrapper);
 
+    var peakData = computeRunningPeakSeries(performanceData);
+    var cumulativeContainer = buildChartContainer(performanceContainer.figure, height, {
+      figureClass: 'chart--conseq-cumulative-profit',
+      chartClass: 'conseq-cumulative-profit-chart',
+      title: 'Zysk skumulowany na tle szczytu'
+    });
+    renderCumulativeProfitChart(cumulativeContainer.chartDiv, performanceData, peakData, series.unit, wrapper);
+
     var drawdownData = computeDrawdownSeries(performanceData);
     if (!drawdownData) {
       console.warn('[Conseq Performance Chart] could not compute drawdown series, skipping drawdown chart');
       return;
     }
 
-    var drawdown = buildChartContainer(performanceContainer.figure, height, {
+    var drawdown = buildChartContainer(cumulativeContainer.figure, height, {
       figureClass: 'chart--conseq-drawdown',
       chartClass: 'conseq-drawdown-chart',
       title: 'Obsunięcie kapitału (drawdown)'
@@ -439,7 +525,8 @@
       computePerformanceSeries: computePerformanceSeries,
       formatAxisAmount: formatAxisAmount,
       computeDrawdownSeries: computeDrawdownSeries,
-      formatPercent: formatPercent
+      formatPercent: formatPercent,
+      computeRunningPeakSeries: computeRunningPeakSeries
     };
   }
 })();

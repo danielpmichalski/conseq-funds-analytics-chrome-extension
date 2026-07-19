@@ -8,7 +8,8 @@ const {
   computePerformanceSeries,
   formatAxisAmount,
   computeDrawdownSeries,
-  formatPercent
+  formatPercent,
+  computeRunningPeakSeries
 } = require('../extension/content.js');
 
 test('parseChartDataAttr', async (t) => {
@@ -195,5 +196,34 @@ test('formatPercent', async (t) => {
   await t.test('handles zero without a stray minus sign', () => {
     assert.equal(formatPercent(-0.04), '0.0%');
     assert.equal(formatPercent(0), '0.0%');
+  });
+});
+
+test('computeRunningPeakSeries', async (t) => {
+  await t.test('tracks the running maximum seen so far', () => {
+    const result = computeRunningPeakSeries([[1, 100], [2, 150], [3, 120], [4, 150], [5, 90]]);
+    assert.deepEqual(result, [[1, 100], [2, 150], [3, 150], [4, 150], [5, 150]]);
+  });
+
+  await t.test('does not assume the input is already sorted by timestamp', () => {
+    const result = computeRunningPeakSeries([[3, 90], [1, 100], [2, 150]]);
+    assert.deepEqual(result, [[1, 100], [2, 150], [3, 150]]);
+  });
+
+  await t.test('a single point is its own peak', () => {
+    assert.deepEqual(computeRunningPeakSeries([[1, 100]]), [[1, 100]]);
+  });
+
+  await t.test('returns null for an empty array', () => {
+    assert.equal(computeRunningPeakSeries([]), null);
+  });
+
+  await t.test('returns null for null input', () => {
+    assert.equal(computeRunningPeakSeries(null), null);
+  });
+
+  await t.test('carries negative peaks through unchanged (no positivity guard, unlike drawdown)', () => {
+    const result = computeRunningPeakSeries([[1, -50], [2, -100], [3, -20]]);
+    assert.deepEqual(result, [[1, -50], [2, -50], [3, -20]]);
   });
 });
