@@ -178,7 +178,14 @@
           chart: { type: 'area' },
           title: { text: null },
           credits: { enabled: false },
-          xAxis: { type: 'datetime' },
+          xAxis: {
+            type: 'datetime',
+            labels: {
+              formatter: function () {
+                return Highcharts.dateFormat('%d.%m.%Y', this.value);
+              }
+            }
+          },
           yAxis: {
             title: { text: null },
             labels: {
