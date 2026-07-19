@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Conseq Performance Chart",
+  "name": "Conseq Analytics",
   "version": "1.0",
-  "description": "Adds a profit/loss performance chart below the fund investment chart on Conseq Funds client area.",
+  "description": "Adds multiple extra charts below the fund investment chart on Conseq Funds client area.",
   "icons": {
     "16": "images/icon-16.png",
     "48": "images/icon-48.png",
